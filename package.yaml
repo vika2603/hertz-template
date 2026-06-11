@@ -1,7 +1,7 @@
 layouts:
   - path: handler.go
     disable: true
-  # NOTE: keep in sync with the biz/router/register.go template in layout.yaml.
+
   - path: register.go
     body: |-
       package router
