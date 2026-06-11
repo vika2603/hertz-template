@@ -47,7 +47,7 @@ layouts:
     body: |-
       module {{.GoModule}}
 
-      go 1.21
+      go 1.23
 
       require (
       	github.com/cloudwego/hertz v0.10.4
@@ -62,28 +62,33 @@ layouts:
       - "{{"
       - "}}"
     body: |-
-      .PHONY: build run clean tidy hz
+      BIN := {{.ServiceName}}
 
-      # Path to this template's package.yaml (adjust to your checkout location).
-      HZ_PKG ?= ./hertz-template/package.yaml
+      # Path to the hz template's package.yaml. Pin it here after scaffolding,
+      # or pass per call: make hz IDL=... HZ_PKG=...
+      HZ_PKG ?=
 
-      build:
-      	go build -o bin/{{.ServiceName}} ./cmd/server
+      .PHONY: run build tidy clean hz
 
       run:
       	go run ./cmd/server
 
-      clean:
-      	rm -rf bin/
+      build:
+      	go build -o bin/$(BIN) ./cmd/server
 
       tidy:
       	go mod tidy
 
-      # Generate/update code from an IDL file, e.g.:
-      #   make hz IDL=idl/echo/echo.proto
+      clean:
+      	rm -rf bin/
+
+      # Generate/update code from an IDL file:
+      #   make hz IDL=idl/<svc>/<svc>.proto HZ_PKG=<template>/package.yaml
       hz:
-      	@test -n "$(IDL)" || { echo "usage: make hz IDL=idl/<svc>/<svc>.proto"; exit 1; }
+      	@test -n "$(IDL)" || { echo "usage: make hz IDL=idl/<svc>/<svc>.proto HZ_PKG=<template>/package.yaml"; exit 1; }
+      	@test -f "$(HZ_PKG)" || { echo "HZ_PKG='$(HZ_PKG)' not found; set it to the hz template's package.yaml"; exit 1; }
       	hz update --idl=$(IDL) --customize_package=$(HZ_PKG) --proto_path=idl
+      	go mod tidy
 
   - path: cmd/server/main.go
     delims:
@@ -110,7 +115,7 @@ layouts:
       	}
 
       	fx.New(
-      		fx.Supply(addr),
+      		fx.Supply(server.Config{Addr: addr}),
       		fx.Provide(
       			server.NewHertzServer,
       			handler.Default,
@@ -146,6 +151,10 @@ layouts:
       	"go.uber.org/fx"
       )
 
+      type Config struct {
+      	Addr string
+      }
+
       type HertzServer struct {
       	*server.Hertz
       	addr string
@@ -153,7 +162,11 @@ layouts:
 
       func (s *HertzServer) Start(ctx context.Context) error {
       	hlog.Infof("hertz server starting on %s", s.addr)
-      	go s.Hertz.Run()
+      	go func() {
+      		if err := s.Hertz.Run(); err != nil {
+      			hlog.Errorf("hertz server run: %v", err)
+      		}
+      	}()
       	return nil
       }
 
@@ -168,9 +181,9 @@ layouts:
       	HertzInner *server.Hertz
       }
 
-      func NewHertzServer(addr string) (HertzServerResult, error) {
+      func NewHertzServer(cfg Config) (HertzServerResult, error) {
       	h := server.Default(
-      		server.WithHostPorts(addr),
+      		server.WithHostPorts(cfg.Addr),
       		server.WithReadTimeout(30*time.Second),
       		server.WithWriteTimeout(30*time.Second),
       		server.WithExitWaitTime(5*time.Second),
@@ -183,7 +196,9 @@ layouts:
       			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
       			AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Request-ID"},
       			ExposeHeaders:    []string{"Content-Length", "X-Request-ID"},
-      			AllowCredentials: true,
+      			// Browsers reject "Access-Control-Allow-Origin: *" combined with
+      			// credentials; switch to explicit AllowOrigins before enabling this.
+      			AllowCredentials: false,
       			MaxAge:           86400,
       		}),
       		accesslog.New(),
@@ -197,7 +212,7 @@ layouts:
       	})
 
       	return HertzServerResult{
-      		Server:     &HertzServer{Hertz: h, addr: addr},
+      		Server:     &HertzServer{Hertz: h, addr: cfg.Addr},
       		HertzInner: h,
       	}, nil
       }
@@ -247,18 +262,28 @@ layouts:
 
   - path: pkg/handler/handler.go
     delims:
-      - ""
-      - ""
+      - "{{"
+      - "}}"
     body: |-
       package handler
 
       import (
+        "errors"
+
         "github.com/cloudwego/hertz/pkg/app"
         "github.com/cloudwego/hertz/pkg/protocol/consts"
+
+        bizerr "{{.GoModule}}/pkg/errors"
       )
 
+      type ErrorResponse struct {
+        Code    int    `json:"code"`
+        Message string `json:"message"`
+        Data    any    `json:"data,omitempty"`
+      }
+
       type Responder interface {
-        Success(c *app.RequestContext, resp any)
+        Success(c *app.RequestContext, data any)
         Fail(c *app.RequestContext, err error)
       }
 
@@ -268,47 +293,20 @@ layouts:
         return DefaultResponder{}
       }
 
-      func (r DefaultResponder) Success(c *app.RequestContext, resp any) {
-        c.JSON(consts.StatusOK, resp)
+      func (r DefaultResponder) Success(c *app.RequestContext, data any) {
+        c.JSON(consts.StatusOK, data)
       }
 
       func (r DefaultResponder) Fail(c *app.RequestContext, err error) {
-        c.JSON(consts.StatusInternalServerError, err.Error())
-      }
-
-  - path: biz/handler/ping.go
-    delims:
-      - "{{"
-      - "}}"
-    body: |-
-      package handler
-
-      import (
-        "context"
-
-        "github.com/cloudwego/hertz/pkg/app"
-
-        "{{.GoModule}}/pkg/handler"
-      )
-
-      type PingRequest struct{}
-
-      type PingHandler struct {
-        resp handler.Responder
-      }
-
-      func NewPingHandler(resp handler.Responder) *PingHandler {
-        return &PingHandler{resp: resp}
-      }
-
-      func (h *PingHandler) Ping(ctx context.Context, c *app.RequestContext) {
-        var req PingRequest
-        if err := c.BindAndValidate(&req); err != nil {
-          h.resp.Fail(c, err)
+        var be *bizerr.BizError
+        if errors.As(err, &be) {
+          c.JSON(be.Status, ErrorResponse{Code: be.Code, Message: be.Message, Data: be.Data})
           return
         }
-
-        h.resp.Success(c, map[string]string{"message": "pong"})
+        c.JSON(consts.StatusInternalServerError, ErrorResponse{
+          Code:    consts.StatusInternalServerError,
+          Message: err.Error(),
+        })
       }
 
   - path: biz/model/
@@ -317,6 +315,7 @@ layouts:
       - ""
     body: ""
 
+  # NOTE: keep in sync with the register.go template in package.yaml.
   - path: biz/router/register.go
     delims:
       - "{{"
@@ -325,6 +324,8 @@ layouts:
       package router
 
       import (
+        "sort"
+
         "go.uber.org/fx"
 
         ping "{{.GoModule}}/biz/router/ping"
@@ -336,36 +337,45 @@ layouts:
           //INSERT_POINT: DO NOT DELETE THIS LINE!
           ping.Register(r)
 
-          var opts []fx.Option
-          for _, v := range r {
-              opts = append(opts, v)
+          names := make([]string, 0, len(r))
+          for name := range r {
+              names = append(names, name)
+          }
+          sort.Strings(names)
+
+          opts := make([]fx.Option, 0, len(r))
+          for _, name := range names {
+              opts = append(opts, r[name])
           }
           return fx.Options(opts...)
       }
 
   - path: biz/router/ping/ping.go
     delims:
-      - "{{"
-      - "}}"
+      - ""
+      - ""
     body: |-
       package ping
 
       import (
-        "github.com/cloudwego/hertz/pkg/app/server"
-        "go.uber.org/fx"
+        "context"
 
-        "{{.GoModule}}/biz/handler"
+        "github.com/cloudwego/hertz/pkg/app"
+        "github.com/cloudwego/hertz/pkg/app/server"
+        "github.com/cloudwego/hertz/pkg/protocol/consts"
+        "go.uber.org/fx"
       )
 
       func Register(r map[string]fx.Option) {
           r["ping"] = fx.Module("ping",
-              fx.Provide(handler.NewPingHandler),
               fx.Invoke(RegisterRouter),
           )
       }
 
-      func RegisterRouter(r *server.Hertz, h *handler.PingHandler) {
-          r.GET("/api/v1/ping", h.Ping)
+      func RegisterRouter(r *server.Hertz) {
+          r.GET("/api/v1/ping", func(ctx context.Context, c *app.RequestContext) {
+              c.JSON(consts.StatusOK, map[string]string{"message": "pong"})
+          })
       }
 
   - path: biz/service/

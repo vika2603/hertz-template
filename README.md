@@ -7,7 +7,7 @@ Custom hz template for generating Hertz projects with Uber FX dependency injecti
 ```bash
 # Create project. No --idl needed: the layout ships a small hand-written
 # ping demo (biz/router/ping/ping.go), so the project compiles and serves
-# GET /api/v1/ping -> {"message":"pong"} right after creation.
+# GET /api/v1/ping right after creation.
 hz new --mod=github.com/xxx/xxx --service=xxx \
   --customize_layout=./hertz-template/layout.yaml \
   --customize_package=./hertz-template/package.yaml
@@ -20,8 +20,8 @@ go mod tidy && go run ./cmd/server
 repo — adjust both paths to match your checkout.
 
 The ping demo is just a starter (hand-written, no IDL). It lives in
-`biz/handler/ping.go` + `biz/router/ping/`; delete those and the
-`ping.Register(r)` line in `biz/router/register.go` once you add real services.
+`biz/router/ping/`; delete it and the ping references in
+`biz/router/register.go` once you add real services.
 
 ## Adding New Services
 
@@ -54,3 +54,20 @@ The ping demo is just a starter (hand-written, no IDL). It lives in
    - Shortcut: `make hz IDL=idl/echo/echo.proto` (point `HZ_PKG` at this
      template's `package.yaml`).
 3. Implement `biz/service/xxx/*.impl.go`
+
+## Responses and Errors
+
+All handlers reply through `pkg/handler.Responder` — the single customization
+point for response shaping. The default implementation stays neutral:
+
+- Success: the service response is returned as-is with HTTP 200; the proto
+  response message is the wire contract, no envelope is added.
+- Error: handlers pass errors through unmodified. The default `Responder`
+  recognizes `*pkg/errors.BizError` (e.g. `errors.NotFound("user not found")`
+  or `errors.New(409, 40901, "duplicate name").WithData(detail)`) and uses its
+  HTTP status with a `{"code", "message", "data"?}` body; any other error maps
+  to HTTP 500.
+
+To use a different shape — a success envelope, another error format, or no
+`BizError` at all — provide your own `Responder` implementation in
+`cmd/server/main.go`.
