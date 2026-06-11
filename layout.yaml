@@ -64,6 +64,9 @@ layouts:
     body: |-
       .PHONY: build run clean tidy hz
 
+      # Path to this template's package.yaml (adjust to your checkout location).
+      HZ_PKG ?= ./hertz-template/package.yaml
+
       build:
       	go build -o bin/{{.ServiceName}} ./cmd/server
 
@@ -76,8 +79,11 @@ layouts:
       tidy:
       	go mod tidy
 
+      # Generate/update code from an IDL file, e.g.:
+      #   make hz IDL=idl/echo/echo.proto
       hz:
-      	hz update -idl idl/api.proto
+      	@test -n "$(IDL)" || { echo "usage: make hz IDL=idl/<svc>/<svc>.proto"; exit 1; }
+      	hz update --idl=$(IDL) --customize_package=$(HZ_PKG) --proto_path=idl
 
   - path: cmd/server/main.go
     delims:
@@ -239,11 +245,71 @@ layouts:
       	return &BizError{Status: 500, Code: 500, Message: message}
       }
 
-  - path: biz/handler/
+  - path: pkg/handler/handler.go
     delims:
       - ""
       - ""
-    body: ""
+    body: |-
+      package handler
+
+      import (
+        "github.com/cloudwego/hertz/pkg/app"
+        "github.com/cloudwego/hertz/pkg/protocol/consts"
+      )
+
+      type Responder interface {
+        Success(c *app.RequestContext, resp any)
+        Fail(c *app.RequestContext, err error)
+      }
+
+      type DefaultResponder struct{}
+
+      func Default() Responder {
+        return DefaultResponder{}
+      }
+
+      func (r DefaultResponder) Success(c *app.RequestContext, resp any) {
+        c.JSON(consts.StatusOK, resp)
+      }
+
+      func (r DefaultResponder) Fail(c *app.RequestContext, err error) {
+        c.JSON(consts.StatusInternalServerError, err.Error())
+      }
+
+  - path: biz/handler/ping.go
+    delims:
+      - "{{"
+      - "}}"
+    body: |-
+      package handler
+
+      import (
+        "context"
+
+        "github.com/cloudwego/hertz/pkg/app"
+
+        "{{.GoModule}}/pkg/handler"
+      )
+
+      type PingRequest struct{}
+
+      type PingHandler struct {
+        resp handler.Responder
+      }
+
+      func NewPingHandler(resp handler.Responder) *PingHandler {
+        return &PingHandler{resp: resp}
+      }
+
+      func (h *PingHandler) Ping(ctx context.Context, c *app.RequestContext) {
+        var req PingRequest
+        if err := c.BindAndValidate(&req); err != nil {
+          h.resp.Fail(c, err)
+          return
+        }
+
+        h.resp.Success(c, map[string]string{"message": "pong"})
+      }
 
   - path: biz/model/
     delims:
@@ -251,11 +317,56 @@ layouts:
       - ""
     body: ""
 
-  - path: biz/router/
+  - path: biz/router/register.go
     delims:
-      - ""
-      - ""
-    body: ""
+      - "{{"
+      - "}}"
+    body: |-
+      package router
+
+      import (
+        "go.uber.org/fx"
+
+        ping "{{.GoModule}}/biz/router/ping"
+      )
+
+      func Options() fx.Option {
+          r := make(map[string]fx.Option)
+
+          //INSERT_POINT: DO NOT DELETE THIS LINE!
+          ping.Register(r)
+
+          var opts []fx.Option
+          for _, v := range r {
+              opts = append(opts, v)
+          }
+          return fx.Options(opts...)
+      }
+
+  - path: biz/router/ping/ping.go
+    delims:
+      - "{{"
+      - "}}"
+    body: |-
+      package ping
+
+      import (
+        "github.com/cloudwego/hertz/pkg/app/server"
+        "go.uber.org/fx"
+
+        "{{.GoModule}}/biz/handler"
+      )
+
+      func Register(r map[string]fx.Option) {
+          r["ping"] = fx.Module("ping",
+              fx.Provide(handler.NewPingHandler),
+              fx.Invoke(RegisterRouter),
+          )
+      }
+
+      func RegisterRouter(r *server.Hertz, h *handler.PingHandler) {
+          r.GET("/api/v1/ping", h.Ping)
+      }
 
   - path: biz/service/
     delims:
@@ -325,60 +436,4 @@ layouts:
 
       extend google.protobuf.MessageOptions {
         optional string reserve = 50830;
-      }
-
-  - path: idl/ping.proto
-    delims:
-      - ""
-      - ""
-    body: |-
-      syntax = "proto3";
-
-      package ping;
-
-      option go_package = "ping";
-
-      import "hertz/api.proto";
-
-      message PingRequest {}
-
-      message PingResponse {
-        string message = 1;
-      }
-
-      service PingService {
-        rpc Ping(PingRequest) returns (PingResponse) {
-          option (api.get) = "/api/v1/ping";
-        }
-      }
-
-  - path: biz/service/ping/service.go
-    delims:
-      - ""
-      - ""
-    body: |-
-      package ping
-
-      import "{{.GoModule}}/biz/model/ping"
-
-      type PingService struct {}
-
-      func NewService() ping.PingService {
-        return &PingService{}
-      }
-
-  - path: biz/service/ping/ping.impl.go
-    delims:
-      - ""
-      - ""
-    body: |-
-      package ping
-
-      import (
-        "context"
-        "{{.GoModule}}/biz/model/ping"
-      )
-
-      func (s *PingService) Ping(ctx context.Context, req *ping.PingRequest) (*ping.PingResponse, error) {
-        return &ping.PingResponse{Message: "pong"}, nil
       }
