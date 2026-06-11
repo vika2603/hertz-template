@@ -294,7 +294,6 @@ layouts:
       - ""
     body: ""
 
-  # NOTE: keep in sync with the register.go template in package.yaml.
   - path: biz/router/register.go
     delims:
       - "{{"
