@@ -12,33 +12,15 @@ layouts:
       - ""
       - ""
     body: |-
-      *.o
-      *.a
-      *.so
-      _obj
-      _test
-      *.[568vq]
-      [568vq].out
-      *.cgo1.go
-      *.cgo2.c
-      _cgo_defun.c
-      _cgo_gotypes.go
-      _cgo_export.*
-      _testmain.go
-      *.exe
-      *.exe~
+      /bin
+      /output
       *.test
       *.prof
-      *.rar
-      *.zip
-      *.gz
       *.log
+      *.local.yml
       .DS_Store
       /.idea
       /.vscode
-      /output
-      /bin
-      *.local.yml
 
   - path: go.mod
     delims:
@@ -181,7 +163,7 @@ layouts:
       	HertzInner *server.Hertz
       }
 
-      func NewHertzServer(cfg Config) (HertzServerResult, error) {
+      func NewHertzServer(cfg Config) HertzServerResult {
       	h := server.Default(
       		server.WithHostPorts(cfg.Addr),
       		server.WithReadTimeout(30*time.Second),
@@ -207,14 +189,11 @@ layouts:
       	h.GET("/healthz", func(ctx context.Context, c *app.RequestContext) {
       		c.JSON(consts.StatusOK, map[string]string{"status": "ok"})
       	})
-      	h.GET("/readyz", func(ctx context.Context, c *app.RequestContext) {
-      		c.JSON(consts.StatusOK, map[string]string{"status": "ok"})
-      	})
 
       	return HertzServerResult{
       		Server:     &HertzServer{Hertz: h, addr: cfg.Addr},
       		HertzInner: h,
-      	}, nil
+      	}
       }
 
   - path: pkg/errors/errors.go

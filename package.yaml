@@ -6,7 +6,6 @@ layouts:
     body: |-
       package router
 
-
       import (
         "sort"
 
@@ -168,10 +167,10 @@ layouts:
 
       import "{{.IDLPackageInfo.GoModule}}/{{.IDLPackageInfo.ModelDir}}/{{$pkg}}"
 
-      type {{$Pkg}}Service struct {}
+      type Service struct{}
 
       func NewService() {{$pkg}}.{{$Pkg}}Service {
-          return &{{$Pkg}}Service{}
+          return &Service{}
       }
 
   - path: "biz/service/{{.GenPackage}}/{{ToSnakeCase .MethodName}}.impl.go"
@@ -180,7 +179,6 @@ layouts:
       type: skip
     body: |-
       {{- $pkg := .FilePackage}}
-      {{- $Pkg := title $pkg}}
       package {{$pkg}}
 
       import (
@@ -190,6 +188,6 @@ layouts:
           "{{.IDLPackageInfo.GoModule}}/{{.IDLPackageInfo.ModelDir}}/{{$pkg}}"
       )
 
-      func (s *{{$Pkg}}Service) {{.Name}}(ctx context.Context, req *{{$pkg}}.{{.RequestTypeRawName}}) (*{{$pkg}}.{{.ReturnTypeRawName}}, error) {
+      func (s *Service) {{.Name}}(ctx context.Context, req *{{$pkg}}.{{.RequestTypeRawName}}) (*{{$pkg}}.{{.ReturnTypeRawName}}, error) {
           return nil, errors.New("not implemented")
       }
